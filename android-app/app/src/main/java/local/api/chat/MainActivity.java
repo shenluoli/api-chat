@@ -894,9 +894,6 @@ public class MainActivity extends Activity {
                 updateMessageText(assistant);
                 updateLoadingView(assistant);
                 saveConversations();
-                if (conversation.id.equals(activeConversationId)) {
-                    renderMessages(autoFollowBottom);
-                }
                 finishGeneration(conversation.id);
             });
         }
@@ -994,9 +991,6 @@ public class MainActivity extends Activity {
             mainHandler.post(() -> {
                 updateLoadingView(assistant);
                 saveConversations();
-                if (conversation.id.equals(activeConversationId)) {
-                    renderMessages(autoFollowBottom);
-                }
                 finishGeneration(conversation.id);
             });
         }
@@ -1072,9 +1066,6 @@ public class MainActivity extends Activity {
             mainHandler.post(() -> {
                 updateLoadingView(assistant);
                 saveConversations();
-                if (conversation.id.equals(activeConversationId)) {
-                    renderMessages(autoFollowBottom);
-                }
                 finishGeneration(conversation.id);
             });
         }
@@ -1567,7 +1558,7 @@ public class MainActivity extends Activity {
 
     private String conversationSystemPrompt(Conversation conversation) {
         if (conversation != null && conversation.systemPrompt != null) return conversation.systemPrompt;
-        return safe(settings.systemPrompt, Settings.DEFAULT_SYSTEM_PROMPT);
+        return Settings.DEFAULT_SYSTEM_PROMPT;
     }
 
     private void showSettingsDialog() {
@@ -2217,7 +2208,7 @@ public class MainActivity extends Activity {
             config.imageSize = settings.imageSize;
             config.systemPrompt = conversation != null && conversation.systemPrompt != null
                     ? conversation.systemPrompt
-                    : settings.systemPrompt;
+                    : Settings.DEFAULT_SYSTEM_PROMPT;
             return config;
         }
     }
@@ -2228,7 +2219,7 @@ public class MainActivity extends Activity {
         c.title = "新对话";
         c.createdAt = System.currentTimeMillis();
         c.updatedAt = c.createdAt;
-        c.systemPrompt = safe(settings.systemPrompt, Settings.DEFAULT_SYSTEM_PROMPT);
+        c.systemPrompt = Settings.DEFAULT_SYSTEM_PROMPT;
         conversations.add(0, c);
         activeConversationId = c.id;
         saveConversations();
@@ -2260,16 +2251,30 @@ public class MainActivity extends Activity {
     private void loadConversations() {
         conversations.clear();
         activeConversationId = prefs.getString("activeConversationId", null);
+        String legacySystemPrompt = prefs.getString("systemPrompt", Settings.DEFAULT_SYSTEM_PROMPT);
+        boolean needsSystemPromptMigration = !prefs.getBoolean("conversationSystemPromptDefaultMigrated", false);
+        boolean changed = false;
         try {
             JSONArray arr = new JSONArray(prefs.getString("conversations", "[]"));
             for (int i = 0; i < arr.length(); i++) conversations.add(Conversation.fromJson(arr.getJSONObject(i)));
         } catch (Exception ignored) {
         }
         for (Conversation conversation : conversations) {
-            if (conversation.systemPrompt == null) {
-                conversation.systemPrompt = safe(settings.systemPrompt, Settings.DEFAULT_SYSTEM_PROMPT);
+            if (conversation.systemPrompt == null
+                    || (needsSystemPromptMigration && conversation.systemPrompt.equals(legacySystemPrompt))) {
+                conversation.systemPrompt = Settings.DEFAULT_SYSTEM_PROMPT;
+                changed = true;
             }
         }
+        if (needsSystemPromptMigration) {
+            prefs.edit()
+                    .putString("systemPrompt", Settings.DEFAULT_SYSTEM_PROMPT)
+                    .putBoolean("conversationSystemPromptDefaultMigrated", true)
+                    .apply();
+            settings.systemPrompt = Settings.DEFAULT_SYSTEM_PROMPT;
+            changed = true;
+        }
+        if (changed) saveConversations();
     }
 
     private void saveConversations() {
@@ -2640,7 +2645,7 @@ public class MainActivity extends Activity {
             s.maxTokens = prefs.getInt("maxTokens", s.maxTokens);
             s.imageModel = prefs.getString("imageModel", s.imageModel);
             s.imageSize = prefs.getString("imageSize", s.imageSize);
-            s.systemPrompt = prefs.getString("systemPrompt", s.systemPrompt);
+            s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
             s.configFor(s.providerId);
             s.applyActiveProvider();
             return s;
