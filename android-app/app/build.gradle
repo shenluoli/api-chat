@@ -1,0 +1,16 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "local.api.chat"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "local.api.chat"
+        minSdk 23
+        targetSdk 36
+        versionCode 1
+        versionName "1.0"
+    }
+}

@@ -1,0 +1,10 @@
+.env
+.local-chat-server.json
+手机访问地址.txt
+node_modules/
+npm-debug.log*
+手机访问地址.txt
+鍚姩鏃ュ織.txt
+.tools/
+*.apk
+*.aab

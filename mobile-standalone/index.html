@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#fffaf1" />
+    <title>Phone API Chat</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <button class="icon-button" id="historyButton" type="button" aria-label="历史对话">☰</button>
+        <div class="title-block">
+          <div class="eyebrow">Phone API Chat</div>
+          <h1 id="conversationTitle">新对话</h1>
+        </div>
+        <div class="top-actions">
+          <button class="thinking-toggle" id="thinkingToggle" type="button" aria-pressed="true">
+            <span class="thinking-dot" aria-hidden="true"></span>
+            <span id="thinkingLabel">思考</span>
+          </button>
+          <button class="icon-button" id="newChatButton" type="button" aria-label="新对话">＋</button>
+          <button class="icon-button" id="settingsButton" type="button" aria-label="设置">⚙</button>
+        </div>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite">
+        <div class="empty" id="emptyState">
+          <h2>手机独立使用</h2>
+          <p>点右上角设置填 API Key。顶部可以新建对话，左上角可以切换历史。</p>
+          <div class="quick-grid">
+            <button type="button" data-prompt="用三句话介绍你能帮我做什么。">试一下</button>
+            <button type="button" data-prompt="帮我把今天要做的事整理成清单。">整理清单</button>
+            <button type="button" data-prompt="解释一下手机独立版和电脑本地版有什么区别。">解释区别</button>
+          </div>
+        </div>
+      </section>
+
+      <form class="composer" id="composer">
+        <textarea id="promptInput" rows="1" placeholder="输入消息..." autocomplete="off"></textarea>
+        <button class="send-button" id="sendButton" type="submit" aria-label="发送">↑</button>
+      </form>
+    </main>
+
+    <section class="sheet" id="historySheet" hidden>
+      <div class="sheet-panel">
+        <div class="sheet-header">
+          <div>
+            <h2>历史对话</h2>
+            <p>记录保存在这台手机的浏览器里。</p>
+          </div>
+          <button class="icon-button" id="closeHistoryButton" type="button" aria-label="关闭历史">×</button>
+        </div>
+        <button class="full-button" id="newChatFromHistoryButton" type="button">新对话</button>
+        <div class="conversation-list" id="conversationList"></div>
+      </div>
+    </section>
+
+    <section class="sheet" id="settingsSheet" hidden>
+      <div class="sheet-panel">
+        <div class="sheet-header">
+          <div>
+            <h2>设置</h2>
+            <p>配置只保存在这台手机的浏览器里。</p>
+          </div>
+          <button class="icon-button" id="closeSettingsButton" type="button" aria-label="关闭设置">×</button>
+        </div>
+
+        <label>
+          <span>Base URL</span>
+          <input id="baseUrlInput" type="url" autocomplete="off" />
+        </label>
+
+        <label>
+          <span>API Key</span>
+          <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk-..." />
+        </label>
+
+        <label>
+          <span>模型</span>
+          <select id="modelInput">
+            <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+            <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+            <option value="deepseek-chat">deepseek-chat</option>
+            <option value="deepseek-reasoner">deepseek-reasoner</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Temperature</span>
+          <input id="temperatureInput" type="number" min="0" max="2" step="0.1" />
+        </label>
+
+        <label>
+          <span>Max tokens</span>
+          <input id="maxTokensInput" type="number" min="1" step="1" />
+        </label>
+
+        <label>
+          <span>System Prompt</span>
+          <textarea id="systemPromptInput" rows="3"></textarea>
+        </label>
+
+        <div class="sheet-actions">
+          <button class="secondary-button" id="testButton" type="button">测试直连</button>
+          <button class="primary-button" id="saveButton" type="button">保存</button>
+        </div>
+        <p class="hint" id="settingsHint"></p>
+      </div>
+    </section>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

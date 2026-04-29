@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local API Chat</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true">L</div>
+          <div>
+            <div class="brand-name">Local Chat</div>
+            <div class="brand-subtitle">API conversation</div>
+          </div>
+        </div>
+
+        <button class="new-chat-button" id="newChatButton" type="button">
+          <span aria-hidden="true">+</span>
+          <span>新对话</span>
+        </button>
+
+        <div class="conversation-list" id="conversationList" aria-label="会话列表"></div>
+      </aside>
+
+      <main class="chat-panel">
+        <header class="topbar">
+          <button class="icon-button mobile-only" id="sidebarToggle" type="button" aria-label="打开侧栏">
+            <span aria-hidden="true">☰</span>
+          </button>
+          <div class="topbar-title">
+            <div class="chat-title" id="chatTitle">新对话</div>
+            <div class="chat-status" id="statusText">准备就绪</div>
+          </div>
+          <div class="topbar-actions">
+            <select class="model-select" id="modelQuickSelect" aria-label="模型"></select>
+            <button class="thinking-toggle" id="thinkingToggle" type="button" aria-pressed="true">
+              <span class="thinking-dot" aria-hidden="true"></span>
+              <span id="thinkingLabel">思考</span>
+            </button>
+            <button class="icon-button" id="settingsButton" type="button" aria-label="设置">
+              <span aria-hidden="true">⚙</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="message-area" id="messageArea" aria-live="polite">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-kicker">Local API Chat</div>
+            <h1>今天想聊点什么？</h1>
+            <div class="prompt-grid">
+              <button type="button" data-prompt="帮我把这段需求拆成前端、后端和测试任务。">拆解一个需求</button>
+              <button type="button" data-prompt="请用清晰的步骤解释这个错误，并给出排查顺序。">排查一个错误</button>
+              <button type="button" data-prompt="帮我写一封简洁、自然、不生硬的中文邮件。">润色一段文字</button>
+              <button type="button" data-prompt="和我一起头脑风暴一个小工具的产品方案。">头脑风暴</button>
+            </div>
+          </div>
+        </section>
+
+        <form class="composer" id="composer">
+          <div class="composer-inner">
+            <textarea
+              id="promptInput"
+              rows="1"
+              placeholder="输入消息..."
+              autocomplete="off"
+            ></textarea>
+            <div class="composer-actions">
+              <button class="ghost-button" id="stopButton" type="button" hidden>停止</button>
+              <button class="send-button" id="sendButton" type="submit" aria-label="发送">
+                <span aria-hidden="true">↑</span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="settingsModal" hidden>
+      <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="dialog-header">
+          <div>
+            <h2 id="settingsTitle">设置</h2>
+            <p>本地保存，API Key 留空时使用后端环境变量。</p>
+          </div>
+          <button class="icon-button" id="closeSettingsButton" type="button" aria-label="关闭设置">
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+
+        <div class="settings-grid">
+          <label>
+            <span>Provider</span>
+            <select id="providerInput">
+              <option value="openai">OpenAI 兼容</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Base URL</span>
+            <input id="baseUrlInput" type="url" placeholder="https://api.openai.com/v1" />
+          </label>
+
+          <label>
+            <span>API Key</span>
+            <input id="apiKeyInput" type="password" placeholder="sk-..." autocomplete="off" />
+          </label>
+
+          <label>
+            <span>Model</span>
+            <input id="modelInput" list="modelOptions" placeholder="gpt-4o-mini" />
+            <datalist id="modelOptions"></datalist>
+          </label>
+
+          <label>
+            <span>Temperature</span>
+            <input id="temperatureInput" type="number" min="0" max="2" step="0.1" />
+          </label>
+
+          <label>
+            <span>Max tokens</span>
+            <input id="maxTokensInput" type="number" min="1" step="1" />
+          </label>
+
+          <label class="wide-label">
+            <span>System Prompt</span>
+            <textarea id="systemPromptInput" rows="4" placeholder="你是一个有帮助的助手。"></textarea>
+          </label>
+
+          <label class="check-row">
+            <input id="streamInput" type="checkbox" />
+            <span>流式输出</span>
+          </label>
+        </div>
+
+        <div class="dialog-footer">
+          <button class="ghost-button" id="fetchModelsButton" type="button">获取模型</button>
+          <button class="primary-button" id="saveSettingsButton" type="button">保存</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

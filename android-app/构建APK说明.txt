@@ -1,0 +1,12 @@
+构建方式：
+
+1. 打开 Android Studio。
+2. File -> Open，选择这个目录：
+   D:\本地api\android-app
+3. 第一次打开如果提示安装 Android SDK / Build Tools / Gradle，按提示安装。
+4. 等 Gradle Sync 成功。
+5. 菜单 Build -> Build Bundle(s) / APK(s) -> Build APK(s)。
+6. 输出文件通常在：
+   D:\本地api\android-app\app\build\outputs\apk\debug\app-debug.apk
+
+如果你希望我继续帮你命令行构建，先让 Android Studio 完成首次 Sync。
