@@ -156,7 +156,7 @@ API 来源：
 
 - Android 端输入框左侧有“图”开关。
 - 开启“图”后，发送内容会调用当前 Base URL 的 OpenAI Images API：`POST {Base URL}/images/generations`。
-- 如果当前聊天模型本身是 `gpt-image-*`、`dall-e-*` 等图片模型，即使没手动打开“图”，发送也应自动走生图端点。
+- 对话模型和文生图模型分开设置；只有打开“图”开关时才走生图端点。
 - 请求体格式：
   - `model`: 设置里的“文生图模型”，默认 `gpt-image-1`
   - `prompt`: 输入框内容
@@ -164,12 +164,14 @@ API 来源：
   - `size`: 设置里的“图片尺寸”，默认 `1024x1024`
   - `response_format`: 仅非 GPT Image 模型使用 `url`；`gpt-image-*` 不要传该字段，接口会返回 `b64_json`
 - 响应支持 `data[0].url` 和 `data[0].b64_json`。返回后会写入消息内容并由图片预览区渲染。
-- IkunCode 中转预设 Base URL：`https://api.ikuncode.cc/v1`。不要把用户提供的 API Key 写入代码、文档或提交记录。
+- Claude 官方来源不支持文生图；需要生图时切换到 OpenAI 或支持 `/images/generations` 的中转来源。
 
 模型：
 
 - 模型列表支持滚动，避免模型过多时看不到底部。
 - 支持从 `/models` 自动获取可用模型。
+- 设置里分别维护对话模型和文生图模型，获取模型后会按模型名自动分到对应选择器。
+- System Prompt 保存在每个对话上，新对话会继承当时的默认提示词。
 - 获取失败时保留内置推荐模型。
 
 交互/UI：
@@ -187,13 +189,13 @@ API 来源：
 
 - DeepSeek：`https://api.deepseek.com/v1`
 - OpenAI：`https://api.openai.com/v1`
+- Claude：`https://api.anthropic.com/v1`
 - Google Gemini OpenAI-compatible：`https://generativelanguage.googleapis.com/v1beta/openai`
 - 通义千问 DashScope：`https://dashscope.aliyuncs.com/compatible-mode/v1`
 - Moonshot Kimi：`https://api.moonshot.cn/v1`
 - 智谱 GLM：`https://open.bigmodel.cn/api/paas/v4`
 - OpenRouter：`https://openrouter.ai/api/v1`
 - 硅基流动：`https://api.siliconflow.cn/v1`
-- IkunCode 中转：`https://api.ikuncode.cc/v1`
 - 自定义 / 中转：默认占位 `https://你的中转地址/v1`
 
 中转注意：
