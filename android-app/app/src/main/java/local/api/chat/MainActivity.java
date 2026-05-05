@@ -115,6 +115,8 @@ public class MainActivity extends Activity {
     private boolean activeGeneration = false;
     private boolean autoFollowBottom = true;
     private boolean touchingMessages = false;
+    private boolean messageDragDuringGeneration = false;
+    private float messageTouchStartY = 0f;
 
     private final int bg = Color.rgb(255, 254, 249);
     private final int page = Color.rgb(255, 253, 248);
@@ -209,21 +211,32 @@ public class MainActivity extends Activity {
         scrollView.setFillViewport(true);
         scrollView.setBackgroundColor(bg);
         scrollView.setOnTouchListener((target, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE) {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
                 touchingMessages = true;
+                messageTouchStartY = event.getY();
+                messageDragDuringGeneration = false;
                 if (activeGeneration && !isAtBottom()) autoFollowBottom = false;
+            } else if (event.getAction() == MotionEvent.ACTION_MOVE) {
+                touchingMessages = true;
+                if (activeGeneration && Math.abs(event.getY() - messageTouchStartY) > dp(3)) {
+                    messageDragDuringGeneration = true;
+                    autoFollowBottom = false;
+                }
             } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
-                if (activeGeneration) autoFollowBottom = isAtBottom();
+                if (activeGeneration && !messageDragDuringGeneration) autoFollowBottom = isAtBottom();
                 touchingMessages = false;
             }
             return false;
         });
         scrollView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
             if (!activeGeneration) return;
+            if (touchingMessages && scrollY != oldScrollY) {
+                messageDragDuringGeneration = true;
+                autoFollowBottom = false;
+                return;
+            }
             if (isAtBottom()) {
                 autoFollowBottom = true;
-            } else if (touchingMessages && scrollY < oldScrollY) {
-                autoFollowBottom = false;
             }
         });
         messageList = new LinearLayout(this);
@@ -421,6 +434,9 @@ public class MainActivity extends Activity {
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setGravity(Gravity.NO_GRAVITY);
         bubble.setPadding(dp(14), dp(12), dp(14), dp(12));
+        if (assistantRole && message.loading && message.content.trim().isEmpty()) {
+            bubble.setMinimumWidth(dp(186));
+        }
         bubble.setBackground(makeSolidBg(
                 assistantRole ? sage : Color.rgb(255, 241, 233),
                 dp(18)
@@ -431,6 +447,7 @@ public class MainActivity extends Activity {
             loadingRow.setOrientation(LinearLayout.HORIZONTAL);
             loadingRow.setGravity(Gravity.CENTER_VERTICAL);
             loadingRow.setPadding(dp(10), 0, dp(10), 0);
+            loadingRow.setMinimumWidth(dp(158));
             loadingRow.setTag(message.id + ":loadingBox");
             loadingRow.setVisibility(message.loading ? View.VISIBLE : View.GONE);
             loadingRow.setBackground(makeStrokeBg(Color.rgb(255, 248, 242), Color.rgb(230, 215, 205), dp(14)));
@@ -449,10 +466,15 @@ public class MainActivity extends Activity {
             loadingText.setTextColor(muted);
             loadingText.setTextSize(12);
             loadingText.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-            loadingRow.addView(loadingText, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+            loadingText.setSingleLine(true);
+            loadingText.setEllipsize(TextUtils.TruncateAt.END);
+            loadingRow.addView(loadingText, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+            ));
 
             LinearLayout.LayoutParams loadingLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
                     dp(36)
             );
             loadingLp.bottomMargin = dp(8);
@@ -510,6 +532,11 @@ public class MainActivity extends Activity {
         content.setGravity(Gravity.LEFT);
         content.setTextAlignment(View.TEXT_ALIGNMENT_GRAVITY);
         content.setTag(message.id);
+        boolean emptyLoadingAssistant = assistantRole
+                && message.loading
+                && visibleText.trim().isEmpty()
+                && message.reasoningContent.trim().isEmpty();
+        content.setVisibility(emptyLoadingAssistant ? View.GONE : View.VISIBLE);
         enableCopy(content);
         bubble.addView(content, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -848,7 +875,8 @@ public class MainActivity extends Activity {
     private void submit() {
         String prompt = promptInput.getText().toString().trim();
         if (prompt.isEmpty()) return;
-        if (settings.apiKey.trim().isEmpty()) {
+        boolean imageRequest = imageModeEnabled;
+        if ((imageRequest ? settings.imageApiKey : settings.apiKey).trim().isEmpty()) {
             showSettingsDialogSmart();
             toast("先填写 API Key");
             return;
@@ -864,7 +892,7 @@ public class MainActivity extends Activity {
         autoFollowBottom = true;
         RequestConfig requestConfig = RequestConfig.from(settings, conversation);
         if (conversation.messages.isEmpty()) conversation.title = makeTitle(prompt);
-        boolean imageRequest = shouldUseImageEndpoint(requestConfig);
+        imageRequest = shouldUseImageEndpoint(requestConfig);
         Message user = new Message(createId(), "user", prompt, null);
         conversation.messages.add(user);
         promptInput.setText("");
@@ -930,6 +958,11 @@ public class MainActivity extends Activity {
         Message user = target.messages.get(targetUserIndex);
         RequestConfig requestConfig = RequestConfig.from(settings, target);
         if (!imageRequest) imageRequest = shouldUseImageEndpoint(requestConfig);
+        if ((imageRequest ? settings.imageApiKey : settings.apiKey).trim().isEmpty()) {
+            showSettingsDialogSmart();
+            toast("先填写 API Key");
+            return;
+        }
         saveConversations();
         appendAssistantAndGenerate(target, user.content, requestConfig, imageRequest);
     }
@@ -942,7 +975,8 @@ public class MainActivity extends Activity {
             toast("当前对话正在回复中");
             return;
         }
-        if (settings.apiKey.trim().isEmpty()) {
+        boolean imageRequest = imageModeEnabled;
+        if ((imageRequest ? settings.imageApiKey : settings.apiKey).trim().isEmpty()) {
             showSettingsDialogSmart();
             toast("先填写 API Key");
             return;
@@ -1011,17 +1045,17 @@ public class MainActivity extends Activity {
 
     private void requestImage(Conversation conversation, Message assistant, String prompt, RequestConfig requestConfig) {
         try {
-            if (isAnthropicProvider(requestConfig)) {
+            if (isAnthropicProvider(requestConfig.imageProviderId, requestConfig.imageBaseUrl)) {
                 throw new RuntimeException("Claude 来源不支持文生图输出，请切换到 OpenAI 或支持 /images/generations 的中转来源。");
             }
-            URL url = new URL(trimSlash(requestConfig.baseUrl) + "/images/generations");
+            URL url = new URL(trimSlash(requestConfig.imageBaseUrl) + "/images/generations");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(30000);
             conn.setReadTimeout(180000);
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("Authorization", "Bearer " + requestConfig.apiKey);
+            conn.setRequestProperty("Authorization", "Bearer " + requestConfig.imageApiKey);
 
             JSONObject body = new JSONObject();
             String imageModel = imageGenerationModel(requestConfig);
@@ -1285,6 +1319,11 @@ public class MainActivity extends Activity {
     }
 
     private void updateLoadingView(Message message) {
+        boolean emptyLoadingAssistant = "assistant".equals(message.role)
+                && message.loading
+                && displayText(message.content).trim().isEmpty()
+                && message.reasoningContent.trim().isEmpty();
+        findAndSetVisibility(messageList, message.id, emptyLoadingAssistant ? View.GONE : View.VISIBLE);
         findAndSetVisibility(messageList, message.id + ":loadingBox", message.loading ? View.VISIBLE : View.GONE);
         findAndSetVisibility(messageList, message.id + ":actions", message.loading ? View.GONE : View.VISIBLE);
         findAndSetText(messageList, message.id + ":loadingText", loadingText(message));
@@ -1494,6 +1533,17 @@ public class MainActivity extends Activity {
             if (dialogRef[0] != null) dialogRef[0].dismiss();
         });
 
+        open.setOnLongClickListener(v -> {
+            showRenameConversationDialog(conversation, () -> {
+                if (conversation.id.equals(activeConversationId) && titleView != null) {
+                    titleView.setText(conversation.title);
+                }
+                saveConversations();
+                refresh.run();
+            });
+            return true;
+        });
+
         delete.setOnClickListener(v -> {
             boolean activeRemoved = removeConversationWithBranches(conversation);
             if (conversations.isEmpty()) createConversation(false);
@@ -1671,8 +1721,11 @@ public class MainActivity extends Activity {
         final String[] pickedProvider = {settings.providerId};
         ProviderConfig initialConfig = settings.configFor(pickedProvider[0]);
         final String[] pickedModel = {defaultModelFor(initialConfig)};
-        final String[] pickedImageModel = {defaultImageModelFor(pickedProvider[0], initialConfig.modelOptions, settings.imageModel)};
         final String[] pickedModelOptions = {initialConfig.modelOptions};
+        final String[] pickedImageProvider = {settings.imageProviderId};
+        ProviderConfig initialImageConfig = settings.configFor(pickedImageProvider[0]);
+        final String[] pickedImageModelOptions = {safe(settings.imageModelOptions, initialImageConfig.modelOptions)};
+        final String[] pickedImageModel = {defaultImageModelFor(pickedImageProvider[0], pickedImageModelOptions[0], settings.imageModel)};
 
         Button providerPicker = flatButton(sourceName(initialConfig));
         providerPicker.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
@@ -1680,6 +1733,13 @@ public class MainActivity extends Activity {
 
         EditText baseUrl = field("Base URL", initialConfig.baseUrl, false);
         EditText apiKey = field("API Key", initialConfig.apiKey, false);
+
+        Button imageProviderPicker = flatButton(sourceName(initialImageConfig));
+        imageProviderPicker.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        imageProviderPicker.setBackground(makeStrokeBg(Color.rgb(250, 246, 239), line, dp(12)));
+
+        EditText imageBaseUrl = field("Base URL", safe(settings.imageBaseUrl, initialImageConfig.baseUrl), false);
+        EditText imageApiKey = field("API Key", safe(settings.imageApiKey, initialImageConfig.apiKey), false);
 
         Button modelPicker = flatButton(pickedModel[0]);
         modelPicker.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
@@ -1695,9 +1755,9 @@ public class MainActivity extends Activity {
         imageModelPicker.setOnClickListener(v -> showImageModelDialog(model -> {
             pickedImageModel[0] = model;
             imageModelPicker.setText(model);
-        }, pickedProvider[0], pickedModelOptions[0], pickedImageModel[0]));
+        }, pickedImageProvider[0], pickedImageModelOptions[0], pickedImageModel[0]));
 
-        providerPicker.setOnClickListener(v -> showSourceDialog(config -> {
+        providerPicker.setOnClickListener(v -> showSourceDialog(pickedProvider[0], config -> {
             saveProviderDraft(pickedProvider[0], baseUrl, apiKey, pickedModel[0], pickedModelOptions[0]);
             pickedProvider[0] = config.providerId;
             providerPicker.setText(sourceName(config));
@@ -1706,6 +1766,15 @@ public class MainActivity extends Activity {
             pickedModelOptions[0] = config.modelOptions;
             pickedModel[0] = defaultModelFor(config);
             modelPicker.setText(pickedModel[0]);
+        }));
+
+        imageProviderPicker.setOnClickListener(v -> showSourceDialog(pickedImageProvider[0], config -> {
+            saveImageProviderDraft(pickedImageProvider[0], imageBaseUrl, imageApiKey, pickedImageModelOptions[0]);
+            pickedImageProvider[0] = config.providerId;
+            imageProviderPicker.setText(sourceName(config));
+            imageBaseUrl.setText(config.baseUrl);
+            imageApiKey.setText(config.apiKey);
+            pickedImageModelOptions[0] = config.modelOptions;
             pickedImageModel[0] = defaultImageModelFor(config.providerId, config.modelOptions, pickedImageModel[0]);
             imageModelPicker.setText(pickedImageModel[0]);
         }));
@@ -1714,33 +1783,76 @@ public class MainActivity extends Activity {
         EditText maxTokens = field("Max tokens", String.valueOf(settings.maxTokens), false);
         EditText imageSize = field("Image Size", settings.imageSize, false);
         EditText systemPrompt = field("System Prompt", conversationSystemPrompt(conversationForSettings), false);
-        systemPrompt.setMinLines(3);
+        systemPrompt.setMinLines(2);
 
-        form.addView(label("服务商"));
-        form.addView(providerPicker, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
-        form.addView(label("Base URL"));
-        form.addView(baseUrl);
-        form.addView(label("API Key"));
-        form.addView(apiKey);
-        form.addView(label("对话模型"));
-        form.addView(modelPicker, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
-        TextView modelHint = smallHint("不知道模型名时，填好 Key 后点获取模型。对话模型和文生图模型会分开选择；使用中转时选“自定义 / 中转”，Base URL 填中转给你的 /v1 地址。");
-        form.addView(modelHint);
+        LinearLayout mainPage = new LinearLayout(this);
+        mainPage.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout imagePage = new LinearLayout(this);
+        imagePage.setOrientation(LinearLayout.VERTICAL);
+        imagePage.setVisibility(View.GONE);
+
+        mainPage.addView(label("服务商"));
+        mainPage.addView(providerPicker, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        mainPage.addView(label("Base URL"));
+        mainPage.addView(baseUrl);
+        mainPage.addView(label("API Key"));
+        mainPage.addView(apiKey);
+        mainPage.addView(label("对话模型"));
+        mainPage.addView(modelPicker, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        TextView modelHint = smallHint("填好 Key 后可获取模型；对话和生图服务商互不绑定。");
+        mainPage.addView(modelHint);
         Button fetchModels = outlineActionButton("获取模型");
         LinearLayout.LayoutParams fetchLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
-        fetchLp.topMargin = dp(10);
-        form.addView(fetchModels, fetchLp);
-        form.addView(label("Temperature"));
-        form.addView(temperature);
-        form.addView(label("Max tokens"));
-        form.addView(maxTokens);
-        form.addView(label("文生图模型"));
-        form.addView(imageModelPicker, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
-        form.addView(label("图片尺寸"));
-        form.addView(imageSize);
-        form.addView(smallHint("只有打开底部“图”按钮时才会使用文生图模型，并调用 Base URL + /images/generations。OpenAI Images API 常用 gpt-image-1、gpt-image-1-mini 或 dall-e-3，尺寸常用 1024x1024。"));
-        form.addView(label("当前对话 System Prompt"));
-        form.addView(systemPrompt);
+        fetchLp.topMargin = dp(8);
+        mainPage.addView(fetchModels, fetchLp);
+        mainPage.addView(label("Temperature"));
+        mainPage.addView(temperature);
+        mainPage.addView(label("Max tokens"));
+        mainPage.addView(maxTokens);
+        mainPage.addView(label("当前对话 System Prompt"));
+        mainPage.addView(systemPrompt);
+
+        imagePage.addView(label("生图服务商"));
+        imagePage.addView(imageProviderPicker, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        imagePage.addView(label("Base URL"));
+        imagePage.addView(imageBaseUrl);
+        imagePage.addView(label("API Key"));
+        imagePage.addView(imageApiKey);
+        imagePage.addView(label("文生图模型"));
+        imagePage.addView(imageModelPicker, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        TextView imageHint = smallHint("底部“图”按钮开启时调用这里的服务商，地址为 Base URL + /images/generations。");
+        imagePage.addView(imageHint);
+        Button fetchImageModels = outlineActionButton("获取生图模型");
+        LinearLayout.LayoutParams fetchImageLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
+        fetchImageLp.topMargin = dp(8);
+        imagePage.addView(fetchImageModels, fetchImageLp);
+        imagePage.addView(label("图片尺寸"));
+        imagePage.addView(imageSize);
+
+        form.addView(mainPage);
+        form.addView(imagePage);
+
+        Button imageConfigBubble = flatButton("生图配置");
+        imageConfigBubble.setTextSize(13);
+        imageConfigBubble.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        imageConfigBubble.setTextColor(accentDark);
+        imageConfigBubble.setBackground(makeStrokeBg(Color.rgb(255, 248, 242), Color.rgb(226, 209, 190), dp(999)));
+        LinearLayout.LayoutParams bubbleLp = new LinearLayout.LayoutParams(dp(132), dp(42));
+        bubbleLp.gravity = Gravity.RIGHT;
+        bubbleLp.topMargin = dp(12);
+        bubbleLp.bottomMargin = dp(2);
+        form.addView(imageConfigBubble, bubbleLp);
+        final boolean[] showingImageSettings = {false};
+        imageConfigBubble.setOnClickListener(v -> {
+            showingImageSettings[0] = !showingImageSettings[0];
+            mainPage.setVisibility(showingImageSettings[0] ? View.GONE : View.VISIBLE);
+            imagePage.setVisibility(showingImageSettings[0] ? View.VISIBLE : View.GONE);
+            imageConfigBubble.setText(showingImageSettings[0] ? "返回主设置" : "生图配置");
+            imageConfigBubble.setTextColor(showingImageSettings[0] ? Color.WHITE : accentDark);
+            imageConfigBubble.setBackground(showingImageSettings[0]
+                    ? makeSolidBg(accent, dp(999))
+                    : makeStrokeBg(Color.rgb(255, 248, 242), Color.rgb(226, 209, 190), dp(999)));
+        });
 
         LinearLayout actions = actionRow();
         Button cancel = outlineActionButton("取消");
@@ -1771,12 +1883,7 @@ public class MainActivity extends Activity {
                             pickedModel[0] = chatModels.get(0);
                             modelPicker.setText(pickedModel[0]);
                         }
-                        List<String> imageModels = availableImageModels(pickedProvider[0], pickedModelOptions[0], pickedImageModel[0]);
-                        if (!imageModels.contains(pickedImageModel[0]) && !imageModels.isEmpty()) {
-                            pickedImageModel[0] = imageModels.get(0);
-                            imageModelPicker.setText(pickedImageModel[0]);
-                        }
-                        modelHint.setText("已获取 " + fetched.size() + " 个模型，可分别点对话模型和文生图模型选择。");
+                        modelHint.setText("已获取 " + fetched.size() + " 个对话模型。");
                         fetchModels.setEnabled(true);
                     });
                 } catch (Exception error) {
@@ -1787,10 +1894,39 @@ public class MainActivity extends Activity {
                 }
             });
         });
+        fetchImageModels.setOnClickListener(v -> {
+            fetchImageModels.setEnabled(false);
+            imageHint.setText("正在获取生图模型列表...");
+            executor.execute(() -> {
+                try {
+                    List<String> fetched = fetchModelList(pickedImageProvider[0], imageBaseUrl.getText().toString().trim(), imageApiKey.getText().toString().trim());
+                    if (fetched.isEmpty()) throw new RuntimeException("没有返回可用模型");
+                    String joined = joinModels(fetched);
+                    mainHandler.post(() -> {
+                        pickedImageModelOptions[0] = joined;
+                        List<String> imageModels = availableImageModels(pickedImageProvider[0], pickedImageModelOptions[0], pickedImageModel[0]);
+                        if (!imageModels.contains(pickedImageModel[0]) && !imageModels.isEmpty()) {
+                            pickedImageModel[0] = imageModels.get(0);
+                            imageModelPicker.setText(pickedImageModel[0]);
+                        }
+                        imageHint.setText("已获取 " + fetched.size() + " 个模型，可点文生图模型选择。");
+                        fetchImageModels.setEnabled(true);
+                    });
+                } catch (Exception error) {
+                    mainHandler.post(() -> {
+                        imageHint.setText("获取失败：" + readableError(error));
+                        fetchImageModels.setEnabled(true);
+                    });
+                }
+            });
+        });
         save.setOnClickListener(v -> {
             settings.providerId = pickedProvider[0];
             saveProviderDraft(pickedProvider[0], baseUrl, apiKey, pickedModel[0], pickedModelOptions[0]);
             settings.applyActiveProvider();
+            settings.imageProviderId = pickedImageProvider[0];
+            saveImageProviderDraft(pickedImageProvider[0], imageBaseUrl, imageApiKey, pickedImageModelOptions[0]);
+            settings.applyImageProvider();
             settings.temperature = parseDouble(temperature.getText().toString(), 0.7);
             settings.maxTokens = parseInt(maxTokens.getText().toString(), 2048);
             settings.imageModel = safe(pickedImageModel[0].trim(), "gpt-image-1");
@@ -1889,7 +2025,7 @@ public class MainActivity extends Activity {
         return hint;
     }
 
-    private void showSourceDialog(SourcePicked callback) {
+    private void showSourceDialog(String selectedProviderId, SourcePicked callback) {
         LinearLayout panel = dialogPanel("API 来源");
         final AlertDialog[] dialogRef = new AlertDialog[1];
 
@@ -1905,7 +2041,7 @@ public class MainActivity extends Activity {
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(0, 0, 0, dp(8));
 
-            boolean selected = config.providerId.equals(settings.providerId);
+            boolean selected = config.providerId.equals(selectedProviderId);
             Button open = menuRowButton(sourceName(config) + "\n" + config.baseUrl, selected ? "●" : "◦", selected ? "已选" : "›", selected);
             row.addView(open, new LinearLayout.LayoutParams(0, dp(48), 1));
 
@@ -1933,7 +2069,7 @@ public class MainActivity extends Activity {
                     toast("至少保留一个来源");
                     return;
                 }
-                boolean wasActive = config.providerId.equals(settings.providerId);
+                boolean wasSelected = config.providerId.equals(selectedProviderId);
                 settings.removeConfig(config.providerId);
                 settings.save(prefs);
                 row.animate()
@@ -1942,9 +2078,11 @@ public class MainActivity extends Activity {
                         .setDuration(150)
                         .withEndAction(() -> sourceList.removeView(row))
                         .start();
-                if (wasActive) {
-                    ProviderConfig active = settings.activeConfig();
-                    callback.pick(active);
+                if (wasSelected) {
+                    ProviderConfig fallback = settings.providerConfigs.isEmpty()
+                            ? settings.activeConfig()
+                            : settings.providerConfigs.get(0);
+                    callback.pick(fallback);
                     if (dialogRef[0] != null) dialogRef[0].dismiss();
                 }
             });
@@ -1986,8 +2124,6 @@ public class MainActivity extends Activity {
             panel.addView(row, lp);
             row.setOnClickListener(v -> {
                 ProviderConfig config = settings.addConfigFromPreset(provider.id);
-                settings.providerId = config.providerId;
-                settings.applyActiveProvider();
                 settings.save(prefs);
                 callback.pick(config);
                 if (dialogRef[0] != null) dialogRef[0].dismiss();
@@ -2027,6 +2163,37 @@ public class MainActivity extends Activity {
             if (!name.isEmpty()) {
                 config.name = name;
                 done.renamed(name);
+                toast("已改名");
+            }
+            dialog.dismiss();
+        });
+    }
+
+    private void showRenameConversationDialog(Conversation conversation, Runnable done) {
+        LinearLayout panel = dialogPanel("重命名对话");
+        EditText nameInput = field("对话名", safe(conversation.title, "新对话"), false);
+        formAdd(panel, label("对话名称"));
+        formAdd(panel, nameInput);
+        TextView hint = smallHint("长按历史对话名即可改名，副本对话也可以单独命名。");
+        panel.addView(hint);
+
+        LinearLayout actions = actionRow();
+        Button cancel = outlineActionButton("取消");
+        Button save = filledButton("保存", accentDark, Color.WHITE);
+        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(44), 1);
+        cancelLp.rightMargin = dp(10);
+        actions.addView(cancel, cancelLp);
+        actions.addView(save, new LinearLayout.LayoutParams(0, dp(44), 1));
+        panel.addView(actions);
+
+        AlertDialog dialog = showCustomDialog(panel);
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        save.setOnClickListener(v -> {
+            String name = nameInput.getText().toString().trim();
+            if (!name.isEmpty()) {
+                conversation.title = name;
+                conversation.updatedAt = System.currentTimeMillis();
+                done.run();
                 toast("已改名");
             }
             dialog.dismiss();
@@ -2207,6 +2374,16 @@ public class MainActivity extends Activity {
         config.apiKey = apiKey.getText().toString().trim();
         config.model = model;
         config.modelOptions = modelOptions;
+    }
+
+    private void saveImageProviderDraft(String providerId, EditText baseUrl, EditText apiKey, String modelOptions) {
+        ProviderConfig config = settings.configFor(providerId);
+        config.baseUrl = baseUrl.getText().toString().trim();
+        config.apiKey = apiKey.getText().toString().trim();
+        config.modelOptions = modelOptions;
+        settings.imageBaseUrl = config.baseUrl;
+        settings.imageApiKey = config.apiKey;
+        settings.imageModelOptions = modelOptions;
     }
 
     private EditText field(String hint, String value, boolean password) {
@@ -2471,7 +2648,11 @@ public class MainActivity extends Activity {
         boolean thinkingEnabled;
         double temperature;
         int maxTokens;
+        String imageProviderId;
+        String imageBaseUrl;
+        String imageApiKey;
         String imageModel;
+        String imageModelOptions;
         String imageSize;
         String systemPrompt;
 
@@ -2484,7 +2665,11 @@ public class MainActivity extends Activity {
             config.thinkingEnabled = settings.thinkingEnabled;
             config.temperature = settings.temperature;
             config.maxTokens = settings.maxTokens;
+            config.imageProviderId = settings.imageProviderId;
+            config.imageBaseUrl = settings.imageBaseUrl;
+            config.imageApiKey = settings.imageApiKey;
             config.imageModel = settings.imageModel;
+            config.imageModelOptions = settings.imageModelOptions;
             config.imageSize = settings.imageSize;
             config.systemPrompt = conversation != null && conversation.systemPrompt != null
                     ? conversation.systemPrompt
@@ -2825,7 +3010,11 @@ public class MainActivity extends Activity {
     }
 
     private void scrollToBottom() {
-        mainHandler.postDelayed(() -> scrollView.fullScroll(View.FOCUS_DOWN), 50);
+        boolean generationSensitive = activeGeneration;
+        mainHandler.postDelayed(() -> {
+            if (generationSensitive && !autoFollowBottom) return;
+            scrollView.fullScroll(View.FOCUS_DOWN);
+        }, 50);
     }
 
     private boolean isAtBottom() {
@@ -2989,7 +3178,11 @@ public class MainActivity extends Activity {
         boolean thinkingEnabled = true;
         double temperature = 0.7;
         int maxTokens = 2048;
+        String imageProviderId = "openai";
+        String imageBaseUrl = "https://api.openai.com/v1";
+        String imageApiKey = "";
         String imageModel = "gpt-image-1";
+        String imageModelOptions = "";
         String imageSize = "1024x1024";
         String systemPrompt = DEFAULT_SYSTEM_PROMPT;
 
@@ -3004,11 +3197,20 @@ public class MainActivity extends Activity {
             s.thinkingEnabled = prefs.getBoolean("thinkingEnabled", s.thinkingEnabled);
             s.temperature = Double.longBitsToDouble(prefs.getLong("temperature", Double.doubleToLongBits(s.temperature)));
             s.maxTokens = prefs.getInt("maxTokens", s.maxTokens);
+            String savedImageProviderId = prefs.getString("imageProviderId", "");
+            s.imageProviderId = savedImageProviderId == null || savedImageProviderId.trim().isEmpty()
+                    ? s.defaultImageProviderId()
+                    : savedImageProviderId;
+            s.imageBaseUrl = prefs.getString("imageBaseUrl", "");
+            s.imageApiKey = prefs.getString("imageApiKey", "");
             s.imageModel = prefs.getString("imageModel", s.imageModel);
+            s.imageModelOptions = prefs.getString("imageModelOptions", "");
             s.imageSize = prefs.getString("imageSize", s.imageSize);
             s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
             s.configFor(s.providerId);
             s.applyActiveProvider();
+            s.configFor(s.imageProviderId);
+            s.applyImageProvider();
             return s;
         }
 
@@ -3023,7 +3225,11 @@ public class MainActivity extends Activity {
                     .putBoolean("thinkingEnabled", thinkingEnabled)
                     .putLong("temperature", Double.doubleToLongBits(temperature))
                     .putInt("maxTokens", maxTokens)
+                    .putString("imageProviderId", imageProviderId)
+                    .putString("imageBaseUrl", imageBaseUrl)
+                    .putString("imageApiKey", imageApiKey)
                     .putString("imageModel", imageModel)
+                    .putString("imageModelOptions", imageModelOptions)
                     .putString("imageSize", imageSize)
                     .putString("systemPrompt", systemPrompt)
                     .apply();
@@ -3039,6 +3245,11 @@ public class MainActivity extends Activity {
                 config.apiKey = apiKey;
                 config.model = model;
                 config.modelOptions = modelOptions;
+            }
+            if (providerId.equals(this.imageProviderId)) {
+                if (imageBaseUrl != null && !imageBaseUrl.trim().isEmpty()) config.baseUrl = imageBaseUrl;
+                if (imageApiKey != null && !imageApiKey.trim().isEmpty()) config.apiKey = imageApiKey;
+                if (imageModelOptions != null && !imageModelOptions.trim().isEmpty()) config.modelOptions = imageModelOptions;
             }
             providerConfigs.add(config);
             return config;
@@ -3077,7 +3288,9 @@ public class MainActivity extends Activity {
             }
             if (providerConfigs.isEmpty()) providerConfigs.add(ProviderConfig.fromPreset("deepseek"));
             if (providerId.equals(id)) providerId = providerConfigs.get(0).providerId;
+            if (imageProviderId.equals(id)) imageProviderId = providerConfigs.get(0).providerId;
             applyActiveProvider();
+            applyImageProvider();
         }
 
         String nextConfigName(String presetId) {
@@ -3095,12 +3308,63 @@ public class MainActivity extends Activity {
             return count <= 1 ? baseName : baseName + " " + count;
         }
 
+        String defaultImageProviderId() {
+            if (providerSupportsImages(providerId, presetIdFor(providerId))) return providerId;
+            for (ProviderConfig config : providerConfigs) {
+                if (providerSupportsImages(config.providerId, config.presetId)) return config.providerId;
+            }
+            return "openai";
+        }
+
+        String presetIdFor(String id) {
+            ProviderConfig config = findConfig(id);
+            if (config != null && config.presetId != null && !config.presetId.trim().isEmpty()) {
+                return config.presetId;
+            }
+            if (id != null && id.contains(":")) return id.substring(0, id.indexOf(':'));
+            return id;
+        }
+
+        static boolean providerSupportsImages(String providerId, String presetId) {
+            String id = presetId == null || presetId.trim().isEmpty() ? providerId : presetId;
+            if (id != null && id.contains(":")) id = id.substring(0, id.indexOf(':'));
+            for (ProviderPreset preset : PROVIDERS) {
+                if (preset.id.equals(id)) return preset.imageModels.length > 0;
+            }
+            return false;
+        }
+
         void applyActiveProvider() {
             ProviderConfig config = configFor(providerId);
             baseUrl = config.baseUrl;
             apiKey = config.apiKey;
             model = config.model;
             modelOptions = config.modelOptions;
+        }
+
+        ProviderConfig imageConfig() {
+            if (imageProviderId == null || imageProviderId.trim().isEmpty()) imageProviderId = providerId;
+            return configFor(imageProviderId);
+        }
+
+        void applyImageProvider() {
+            ProviderConfig config = imageConfig();
+            imageProviderId = config.providerId;
+            if (imageBaseUrl == null || imageBaseUrl.trim().isEmpty()) {
+                imageBaseUrl = config.baseUrl;
+            } else {
+                config.baseUrl = imageBaseUrl;
+            }
+            if (imageApiKey == null || imageApiKey.trim().isEmpty()) {
+                imageApiKey = config.apiKey;
+            } else {
+                config.apiKey = imageApiKey;
+            }
+            if (imageModelOptions == null || imageModelOptions.trim().isEmpty()) {
+                imageModelOptions = config.modelOptions;
+            } else {
+                config.modelOptions = imageModelOptions;
+            }
         }
 
         void loadProviderConfigs(SharedPreferences prefs) {
