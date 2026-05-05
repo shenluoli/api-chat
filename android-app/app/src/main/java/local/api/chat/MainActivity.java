@@ -416,7 +416,8 @@ public class MainActivity extends Activity {
         metaLp.bottomMargin = dp(8);
         wrap.addView(meta, metaLp);
 
-        LinearLayout bubble = new LinearLayout(this);
+        int maxBubbleWidth = maxMessageBubbleWidth();
+        BoundedLinearLayout bubble = new BoundedLinearLayout(this, maxBubbleWidth);
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setGravity(Gravity.NO_GRAVITY);
         bubble.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -484,6 +485,7 @@ public class MainActivity extends Activity {
             reasoningText.setTag(message.id + ":reasoningText");
             reasoningText.setTextColor(Color.rgb(120, 111, 99));
             reasoningText.setTextSize(12);
+            reasoningText.setMaxWidth(maxBubbleWidth - dp(28));
             reasoningText.setLineSpacing(dp(2), 1.0f);
             reasoningText.setVisibility(message.reasoningOpen ? View.VISIBLE : View.GONE);
             enableCopy(reasoningText);
@@ -503,13 +505,14 @@ public class MainActivity extends Activity {
         String visibleText = displayText(message.content);
         TextView content = paragraph("");
         content.setTextSize(assistantRole ? 15.4f : 15.0f);
+        content.setMaxWidth(maxBubbleWidth - dp(28));
         content.setText(assistantRole ? renderMarkdownText(visibleText) : visibleText);
         content.setGravity(Gravity.LEFT);
         content.setTextAlignment(View.TEXT_ALIGNMENT_GRAVITY);
         content.setTag(message.id);
         enableCopy(content);
         bubble.addView(content, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
@@ -524,10 +527,12 @@ public class MainActivity extends Activity {
         mediaLp.topMargin = visibleText.trim().isEmpty() ? 0 : dp(10);
         bubble.addView(media, mediaLp);
 
-        wrap.addView(bubble, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams bubbleLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        );
+        bubbleLp.gravity = assistantRole ? Gravity.LEFT : Gravity.RIGHT;
+        wrap.addView(bubble, bubbleLp);
         addMessageActions(wrap, message, assistantRole);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -570,6 +575,13 @@ public class MainActivity extends Activity {
         view.setTextSize(14.5f);
         view.setLineSpacing(dp(4), 1.0f);
         return view;
+    }
+
+    private int maxMessageBubbleWidth() {
+        int screen = getResources().getDisplayMetrics().widthPixels;
+        int comfortable = screen - dp(84);
+        int proportional = (int) (screen * 0.82f);
+        return Math.max(dp(180), Math.min(comfortable, proportional));
     }
 
     private CharSequence renderMarkdownText(String value) {
@@ -2412,6 +2424,21 @@ public class MainActivity extends Activity {
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             int cappedHeight = View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST);
             super.onMeasure(widthMeasureSpec, cappedHeight);
+        }
+    }
+
+    private static class BoundedLinearLayout extends LinearLayout {
+        private final int maxWidth;
+
+        BoundedLinearLayout(Context context, int maxWidth) {
+            super(context);
+            this.maxWidth = maxWidth;
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int cappedWidth = View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST);
+            super.onMeasure(cappedWidth, heightMeasureSpec);
         }
     }
 
