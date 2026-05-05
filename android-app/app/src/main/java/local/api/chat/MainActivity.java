@@ -1426,35 +1426,49 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(branch ? dp(24) : 0, dp(8), 0, 0);
+        row.setPadding(branch ? dp(28) : 0, branch ? dp(5) : dp(8), 0, 0);
         row.setTag(conversation.id);
 
         List<Conversation> branches = branchChildren(conversation.id);
+        boolean selected = conversation.id.equals(activeConversationId);
+        Button open = menuRowButton(historyTitle(conversation, branch), selected ? "●" : "◦", branch ? "副本" : "›", selected);
+        int rowHeight = branch ? dp(36) : dp(44);
+        if (branch) {
+            open.setTextSize(12.2f);
+            open.setTextColor(selected ? accentDark : muted);
+            open.setPadding(dp(10), 0, dp(10), 0);
+            open.setBackground(makeStrokeBg(
+                    selected ? Color.rgb(249, 240, 229) : Color.rgb(253, 249, 244),
+                    selected ? Color.rgb(226, 209, 190) : Color.rgb(235, 228, 218),
+                    dp(12)
+            ));
+        } else if (!branches.isEmpty()) {
+            open.setPadding(dp(12), 0, dp(40), 0);
+        }
+
+        android.widget.FrameLayout openFrame = new android.widget.FrameLayout(this);
+        openFrame.addView(open, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ));
         if (!branch && !branches.isEmpty()) {
-            Button toggle = iconButton(conversation.branchesOpen ? "▾" : "▸");
-            toggle.setTextSize(13);
+            Button toggle = historyToggleButton(conversation.branchesOpen ? "▾" : "▸");
             toggle.setContentDescription("展开副本");
             toggle.setOnClickListener(v -> {
                 conversation.branchesOpen = !conversation.branchesOpen;
                 saveConversations();
                 refresh.run();
             });
-            LinearLayout.LayoutParams toggleLp = new LinearLayout.LayoutParams(dp(34), dp(42));
-            toggleLp.rightMargin = dp(8);
-            row.addView(toggle, toggleLp);
-        } else {
-            View spacer = new View(this);
-            LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(branch ? dp(18) : dp(42), dp(42));
-            if (!branch) spacerLp.rightMargin = dp(8);
-            row.addView(spacer, spacerLp);
+            android.widget.FrameLayout.LayoutParams toggleLp = new android.widget.FrameLayout.LayoutParams(dp(32), dp(34));
+            toggleLp.gravity = Gravity.RIGHT | Gravity.CENTER_VERTICAL;
+            toggleLp.rightMargin = dp(4);
+            openFrame.addView(toggle, toggleLp);
         }
-
-        boolean selected = conversation.id.equals(activeConversationId);
-        Button open = menuRowButton(historyTitle(conversation, branch), selected ? "●" : "◦", branch ? "副本" : "›", selected);
-        row.addView(open, new LinearLayout.LayoutParams(0, dp(44), 1));
+        row.addView(openFrame, new LinearLayout.LayoutParams(0, rowHeight, 1));
 
         Button delete = iconButton("×");
-        LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(dp(42), dp(42));
+        if (branch) delete.setTextSize(15);
+        LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(branch ? dp(34) : dp(42), branch ? dp(34) : dp(42));
         deleteLp.leftMargin = dp(8);
         row.addView(delete, deleteLp);
         historyList.addView(row);
@@ -1482,6 +1496,22 @@ public class MainActivity extends Activity {
 
     private String historyTitle(Conversation conversation, boolean branch) {
         return branch ? "↳  " + conversation.title : conversation.title;
+    }
+
+    private Button historyToggleButton(String value) {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setText(value);
+        button.setTextSize(13);
+        button.setTextColor(accentDark);
+        button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setPadding(0, 0, 0, 0);
+        button.setStateListAnimator(null);
+        button.setBackground(makeSolidBg(Color.rgb(255, 248, 242), dp(999)));
+        addPressAnimation(button);
+        return button;
     }
 
     private List<Conversation> branchChildren(String parentId) {
