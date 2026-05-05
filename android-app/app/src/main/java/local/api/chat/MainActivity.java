@@ -528,6 +528,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
+        addMessageActions(wrap, message, assistantRole);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -536,6 +537,30 @@ public class MainActivity extends Activity {
         lp.bottomMargin = dp(24);
         messageList.addView(wrap, lp);
         animateIn(wrap);
+    }
+
+    private void addMessageActions(LinearLayout wrap, Message message, boolean assistantRole) {
+        if (message.loading) return;
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(assistantRole ? Gravity.LEFT : Gravity.RIGHT);
+        actions.setPadding(dp(8), dp(6), dp(8), 0);
+
+        Button action = tinyActionButton(assistantRole ? "重新生成" : "编辑并重发");
+        action.setOnClickListener(v -> {
+            if (assistantRole) regenerateReply(message);
+            else showEditAndResendDialog(message);
+        });
+        actions.addView(action, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dp(32)
+        ));
+
+        wrap.addView(actions, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
     }
 
     private TextView paragraph(String value) {
@@ -824,27 +849,152 @@ public class MainActivity extends Activity {
         }
 
         hideKeyboard();
-        startGeneration(conversation.id);
         autoFollowBottom = true;
         RequestConfig requestConfig = RequestConfig.from(settings, conversation);
         if (conversation.messages.isEmpty()) conversation.title = makeTitle(prompt);
         boolean imageRequest = shouldUseImageEndpoint(requestConfig);
         Message user = new Message(createId(), "user", prompt, null);
+        conversation.messages.add(user);
+        promptInput.setText("");
+        appendAssistantAndGenerate(conversation, prompt, requestConfig, imageRequest);
+    }
+
+    private void appendAssistantAndGenerate(Conversation conversation, String prompt, RequestConfig requestConfig, boolean imageRequest) {
+        if (isConversationGenerating(conversation.id)) {
+            toast("当前对话正在回复中");
+            return;
+        }
+
+        startGeneration(conversation.id);
+        autoFollowBottom = true;
         Message assistant = new Message(createId(), "assistant", "", imageRequest ? imageGenerationModel(requestConfig) : requestConfig.model);
         assistant.loading = true;
-        conversation.messages.add(user);
         conversation.messages.add(assistant);
         conversation.updatedAt = System.currentTimeMillis();
-        moveConversationToTop(conversation.id);
-        promptInput.setText("");
+        moveConversationToTop(rootConversationId(conversation));
         saveConversations();
-        renderMessages(true);
+        if (conversation.id.equals(activeConversationId)) renderMessages(true);
 
         if (imageRequest) {
             executor.execute(() -> requestImage(conversation, assistant, prompt, requestConfig));
         } else {
             executor.execute(() -> requestChat(conversation, assistant, requestConfig));
         }
+    }
+
+    private void regenerateReply(Message assistantMessage) {
+        Conversation source = activeConversation();
+        int assistantIndex = indexOfMessage(source, assistantMessage.id);
+        if (assistantIndex < 0 || !"assistant".equals(assistantMessage.role)) return;
+        if (isConversationGenerating(source.id)) {
+            toast("当前对话正在回复中");
+            return;
+        }
+        if (settings.apiKey.trim().isEmpty()) {
+            showSettingsDialogSmart();
+            toast("先填写 API Key");
+            return;
+        }
+
+        int userIndex = previousUserIndex(source, assistantIndex);
+        if (userIndex < 0) {
+            toast("找不到对应的用户消息");
+            return;
+        }
+
+        boolean wasLatestReply = assistantIndex == source.messages.size() - 1;
+        boolean imageRequest = isImageGenerationModel(assistantMessage.model);
+        Conversation target = source;
+        int targetUserIndex = userIndex;
+        if (!wasLatestReply) {
+            target = createBranchCopy(source, userIndex, "重新生成");
+            targetUserIndex = target.messages.size() - 1;
+            activeConversationId = target.id;
+            toast("已创建副本并重新生成");
+        } else {
+            removeMessagesAfter(source, userIndex);
+        }
+
+        Message user = target.messages.get(targetUserIndex);
+        RequestConfig requestConfig = RequestConfig.from(settings, target);
+        if (!imageRequest) imageRequest = shouldUseImageEndpoint(requestConfig);
+        saveConversations();
+        appendAssistantAndGenerate(target, user.content, requestConfig, imageRequest);
+    }
+
+    private void showEditAndResendDialog(Message userMessage) {
+        Conversation source = activeConversation();
+        int messageIndex = indexOfMessage(source, userMessage.id);
+        if (messageIndex < 0 || !"user".equals(userMessage.role)) return;
+        if (isConversationGenerating(source.id)) {
+            toast("当前对话正在回复中");
+            return;
+        }
+        if (settings.apiKey.trim().isEmpty()) {
+            showSettingsDialogSmart();
+            toast("先填写 API Key");
+            return;
+        }
+
+        LinearLayout panel = dialogPanel("编辑并重发");
+        EditText input = field("消息内容", userMessage.content, false);
+        input.setSingleLine(false);
+        input.setMinLines(4);
+        input.setMaxLines(8);
+        input.setGravity(Gravity.TOP | Gravity.LEFT);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+        panel.addView(label("消息内容"));
+        panel.addView(input, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+        TextView hint = smallHint("会从这条消息开始重新发送。编辑较早消息时，会自动创建当前对话副本，原对话保持不变。");
+        panel.addView(hint);
+
+        LinearLayout actions = actionRow();
+        Button cancel = outlineActionButton("取消");
+        Button resend = filledButton("重新发送", accentDark, Color.WHITE);
+        LinearLayout.LayoutParams cancelLp = new LinearLayout.LayoutParams(0, dp(44), 1);
+        cancelLp.rightMargin = dp(10);
+        actions.addView(cancel, cancelLp);
+        actions.addView(resend, new LinearLayout.LayoutParams(0, dp(44), 1));
+        panel.addView(actions);
+
+        AlertDialog dialog = showCustomDialog(panel);
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        resend.setOnClickListener(v -> {
+            String edited = input.getText().toString().trim();
+            if (edited.isEmpty()) {
+                toast("消息不能为空");
+                return;
+            }
+            dialog.dismiss();
+            resendEditedMessage(source, messageIndex, edited);
+        });
+    }
+
+    private void resendEditedMessage(Conversation source, int messageIndex, String edited) {
+        boolean latestUser = messageIndex == lastUserIndex(source);
+        Conversation target = source;
+        int targetUserIndex = messageIndex;
+        if (!latestUser) {
+            target = createBranchCopy(source, messageIndex, "编辑副本");
+            targetUserIndex = target.messages.size() - 1;
+            activeConversationId = target.id;
+            toast("已创建副本并重新发送");
+        }
+
+        Message user = target.messages.get(targetUserIndex);
+        user.content = edited;
+        removeMessagesAfter(target, targetUserIndex);
+        if (targetUserIndex == 0) target.title = makeTitle(edited);
+        target.updatedAt = System.currentTimeMillis();
+
+        RequestConfig requestConfig = RequestConfig.from(settings, target);
+        boolean imageRequest = shouldUseImageEndpoint(requestConfig);
+        saveConversations();
+        appendAssistantAndGenerate(target, edited, requestConfig, imageRequest);
     }
 
     private void requestImage(Conversation conversation, Message assistant, String prompt, RequestConfig requestConfig) {
@@ -1235,52 +1385,22 @@ public class MainActivity extends Activity {
         historyList.setLayoutTransition(new LayoutTransition());
         historyScroll.addView(historyList);
 
-        for (Conversation conversation : conversations) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dp(8), 0, 0);
-            row.setTag(conversation.id);
-
-            Button open = menuRowButton(conversation.title, conversation.id.equals(activeConversationId) ? "●" : "◦", "›", conversation.id.equals(activeConversationId));
-            row.addView(open, new LinearLayout.LayoutParams(0, dp(44), 1));
-
-            Button delete = iconButton("×");
-            LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(dp(42), dp(42));
-            deleteLp.leftMargin = dp(8);
-            row.addView(delete, deleteLp);
-            historyList.addView(row);
-
-            open.setOnClickListener(v -> {
-                activeConversationId = conversation.id;
-                saveConversations();
-                renderMessages();
-                refreshBusyState();
-                if (dialogRef[0] != null) dialogRef[0].dismiss();
-            });
-
-            delete.setOnClickListener(v -> {
-                boolean wasActive = conversation.id.equals(activeConversationId);
-                if (!conversations.remove(conversation)) return;
-                delete.setEnabled(false);
-                if (wasActive) {
-                    activeConversationId = conversations.isEmpty() ? null : conversations.get(0).id;
+        Runnable[] renderHistory = new Runnable[1];
+        renderHistory[0] = () -> {
+            historyList.removeAllViews();
+            for (Conversation conversation : conversations) {
+                if (isBranchConversation(conversation)) continue;
+                addHistoryRow(historyList, conversation, false, dialogRef, renderHistory[0]);
+                if (conversation.branchesOpen) {
+                    for (Conversation branch : conversations) {
+                        if (conversation.id.equals(branch.parentId)) {
+                            addHistoryRow(historyList, branch, true, dialogRef, renderHistory[0]);
+                        }
+                    }
                 }
-                if (activeConversationId == null) createConversation(false);
-                saveConversations();
-                if (wasActive) {
-                    renderMessages();
-                    refreshBusyState();
-                }
-                refreshHistorySelection(historyList);
-                row.animate()
-                        .alpha(0f)
-                        .translationX(dp(16))
-                        .setDuration(150)
-                        .withEndAction(() -> historyList.removeView(row))
-                        .start();
-            });
-        }
+            }
+        };
+        renderHistory[0].run();
 
         LinearLayout.LayoutParams historyLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -1300,6 +1420,92 @@ public class MainActivity extends Activity {
             dialog.dismiss();
         });
         close.setOnClickListener(v -> dialog.dismiss());
+    }
+
+    private void addHistoryRow(LinearLayout historyList, Conversation conversation, boolean branch, AlertDialog[] dialogRef, Runnable refresh) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(branch ? dp(24) : 0, dp(8), 0, 0);
+        row.setTag(conversation.id);
+
+        List<Conversation> branches = branchChildren(conversation.id);
+        if (!branch && !branches.isEmpty()) {
+            Button toggle = iconButton(conversation.branchesOpen ? "▾" : "▸");
+            toggle.setTextSize(13);
+            toggle.setContentDescription("展开副本");
+            toggle.setOnClickListener(v -> {
+                conversation.branchesOpen = !conversation.branchesOpen;
+                saveConversations();
+                refresh.run();
+            });
+            LinearLayout.LayoutParams toggleLp = new LinearLayout.LayoutParams(dp(34), dp(42));
+            toggleLp.rightMargin = dp(8);
+            row.addView(toggle, toggleLp);
+        } else {
+            View spacer = new View(this);
+            LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(branch ? dp(18) : dp(42), dp(42));
+            if (!branch) spacerLp.rightMargin = dp(8);
+            row.addView(spacer, spacerLp);
+        }
+
+        boolean selected = conversation.id.equals(activeConversationId);
+        Button open = menuRowButton(historyTitle(conversation, branch), selected ? "●" : "◦", branch ? "副本" : "›", selected);
+        row.addView(open, new LinearLayout.LayoutParams(0, dp(44), 1));
+
+        Button delete = iconButton("×");
+        LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(dp(42), dp(42));
+        deleteLp.leftMargin = dp(8);
+        row.addView(delete, deleteLp);
+        historyList.addView(row);
+
+        open.setOnClickListener(v -> {
+            activeConversationId = conversation.id;
+            saveConversations();
+            renderMessages();
+            refreshBusyState();
+            if (dialogRef[0] != null) dialogRef[0].dismiss();
+        });
+
+        delete.setOnClickListener(v -> {
+            boolean activeRemoved = removeConversationWithBranches(conversation);
+            if (conversations.isEmpty()) createConversation(false);
+            if (activeRemoved) {
+                activeConversationId = conversations.get(0).id;
+                renderMessages();
+                refreshBusyState();
+            }
+            saveConversations();
+            refresh.run();
+        });
+    }
+
+    private String historyTitle(Conversation conversation, boolean branch) {
+        return branch ? "↳  " + conversation.title : conversation.title;
+    }
+
+    private List<Conversation> branchChildren(String parentId) {
+        List<Conversation> result = new ArrayList<>();
+        for (Conversation conversation : conversations) {
+            if (parentId.equals(conversation.parentId)) result.add(conversation);
+        }
+        return result;
+    }
+
+    private boolean removeConversationWithBranches(Conversation target) {
+        String targetRoot = rootConversationId(target);
+        boolean activeRemoved = false;
+        for (int i = conversations.size() - 1; i >= 0; i--) {
+            Conversation item = conversations.get(i);
+            boolean remove = isBranchConversation(target)
+                    ? item.id.equals(target.id)
+                    : item.id.equals(target.id) || targetRoot.equals(item.parentId);
+            if (remove) {
+                if (item.id.equals(activeConversationId)) activeRemoved = true;
+                conversations.remove(i);
+            }
+        }
+        return activeRemoved;
     }
 
     private void showModelDialog() {
@@ -2044,6 +2250,22 @@ public class MainActivity extends Activity {
         return button;
     }
 
+    private Button tinyActionButton(String value) {
+        Button button = new Button(this);
+        button.setAllCaps(false);
+        button.setText(value);
+        button.setTextSize(11.5f);
+        button.setTextColor(accentSoft);
+        button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setPadding(dp(10), 0, dp(10), 0);
+        button.setStateListAnimator(null);
+        button.setBackground(makeStrokeBg(Color.rgb(255, 252, 246), Color.rgb(229, 221, 210), dp(999)));
+        addPressAnimation(button);
+        return button;
+    }
+
     private Button flatButton(String value) {
         Button button = new Button(this);
         button.setAllCaps(false);
@@ -2235,6 +2457,87 @@ public class MainActivity extends Activity {
         }
         createConversation(false);
         return conversations.get(0);
+    }
+
+    private Conversation findConversation(String id) {
+        for (Conversation c : conversations) {
+            if (c.id.equals(id)) return c;
+        }
+        return null;
+    }
+
+    private String rootConversationId(Conversation conversation) {
+        if (conversation == null) return "";
+        return conversation.parentId == null || conversation.parentId.trim().isEmpty()
+                ? conversation.id
+                : conversation.parentId;
+    }
+
+    private boolean isBranchConversation(Conversation conversation) {
+        return conversation != null && conversation.parentId != null && !conversation.parentId.trim().isEmpty();
+    }
+
+    private int indexOfMessage(Conversation conversation, String messageId) {
+        if (conversation == null || messageId == null) return -1;
+        for (int i = 0; i < conversation.messages.size(); i++) {
+            if (messageId.equals(conversation.messages.get(i).id)) return i;
+        }
+        return -1;
+    }
+
+    private int previousUserIndex(Conversation conversation, int fromIndex) {
+        if (conversation == null) return -1;
+        for (int i = Math.min(fromIndex - 1, conversation.messages.size() - 1); i >= 0; i--) {
+            if ("user".equals(conversation.messages.get(i).role)) return i;
+        }
+        return -1;
+    }
+
+    private int lastUserIndex(Conversation conversation) {
+        if (conversation == null) return -1;
+        for (int i = conversation.messages.size() - 1; i >= 0; i--) {
+            if ("user".equals(conversation.messages.get(i).role)) return i;
+        }
+        return -1;
+    }
+
+    private void removeMessagesAfter(Conversation conversation, int index) {
+        while (conversation.messages.size() > index + 1) {
+            conversation.messages.remove(conversation.messages.size() - 1);
+        }
+    }
+
+    private Conversation createBranchCopy(Conversation source, int throughIndex, String reason) {
+        Conversation branch = new Conversation();
+        branch.id = createId();
+        branch.parentId = rootConversationId(source);
+        branch.title = branchTitle(source, reason);
+        branch.systemPrompt = conversationSystemPrompt(source);
+        branch.createdAt = System.currentTimeMillis();
+        branch.updatedAt = branch.createdAt;
+        int end = Math.min(throughIndex, source.messages.size() - 1);
+        for (int i = 0; i <= end; i++) {
+            branch.messages.add(source.messages.get(i).copy());
+        }
+
+        Conversation root = findConversation(branch.parentId);
+        if (root != null) root.branchesOpen = true;
+        int insertAt = 0;
+        for (int i = 0; i < conversations.size(); i++) {
+            if (conversations.get(i).id.equals(branch.parentId)) {
+                insertAt = i + 1;
+                break;
+            }
+        }
+        conversations.add(insertAt, branch);
+        return branch;
+    }
+
+    private String branchTitle(Conversation source, String reason) {
+        String base = safe(source.title, "新对话");
+        String suffix = safe(reason, "副本");
+        String title = base + " · " + suffix;
+        return title.length() > 26 ? title.substring(0, 26) + "..." : title;
     }
 
     private void moveConversationToTop(String id) {
@@ -2861,6 +3164,14 @@ public class MainActivity extends Activity {
             message.loading = false;
             return message;
         }
+
+        Message copy() {
+            Message clone = new Message(id, role, content, model);
+            clone.reasoningContent = reasoningContent;
+            clone.reasoningOpen = reasoningOpen;
+            clone.loading = false;
+            return clone;
+        }
     }
 
     static class ImageRef {
@@ -2875,8 +3186,10 @@ public class MainActivity extends Activity {
 
     static class Conversation {
         String id;
+        String parentId = "";
         String title;
         String systemPrompt;
+        boolean branchesOpen = false;
         long createdAt;
         long updatedAt;
         List<Message> messages = new ArrayList<>();
@@ -2884,8 +3197,10 @@ public class MainActivity extends Activity {
         JSONObject toJson() throws Exception {
             JSONObject obj = new JSONObject();
             obj.put("id", id);
+            obj.put("parentId", parentId == null ? "" : parentId);
             obj.put("title", title);
             obj.put("systemPrompt", systemPrompt == null ? "" : systemPrompt);
+            obj.put("branchesOpen", branchesOpen);
             obj.put("createdAt", createdAt);
             obj.put("updatedAt", updatedAt);
             JSONArray arr = new JSONArray();
@@ -2897,8 +3212,10 @@ public class MainActivity extends Activity {
         static Conversation fromJson(JSONObject obj) {
             Conversation c = new Conversation();
             c.id = obj.optString("id");
+            c.parentId = obj.optString("parentId", "");
             c.title = obj.optString("title", "新对话");
             c.systemPrompt = obj.has("systemPrompt") ? obj.optString("systemPrompt", "") : null;
+            c.branchesOpen = obj.optBoolean("branchesOpen", false);
             c.createdAt = obj.optLong("createdAt", System.currentTimeMillis());
             c.updatedAt = obj.optLong("updatedAt", c.createdAt);
             JSONArray arr = obj.optJSONArray("messages");
