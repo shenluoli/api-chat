@@ -99,6 +99,8 @@ public class MainActivity extends Activity {
     private final Map<String, Bitmap> imageCache = new HashMap<>();
     private final List<Conversation> conversations = new ArrayList<>();
     private final Set<String> generatingConversationIds = new LinkedHashSet<>();
+    private final Set<String> cancelledMessageIds = new LinkedHashSet<>();
+    private final Map<String, HttpURLConnection> activeGenerationConnections = new HashMap<>();
 
     private SharedPreferences prefs;
     private Settings settings;
@@ -299,7 +301,10 @@ public class MainActivity extends Activity {
         sendButton.setMinHeight(0);
         sendButton.setPadding(0, 0, 0, dp(1));
         sendButton.setBackground(makeSolidBg(accent, dp(23)));
-        sendButton.setOnClickListener(v -> submit());
+        sendButton.setOnClickListener(v -> {
+            if (activeGeneration) cancelActiveGeneration();
+            else submit();
+        });
         addPressAnimation(sendButton);
         LinearLayout.LayoutParams sendLp = new LinearLayout.LayoutParams(dp(46), dp(46));
         sendLp.gravity = Gravity.BOTTOM;
@@ -1053,6 +1058,7 @@ public class MainActivity extends Activity {
             }
             URL url = new URL(trimSlash(requestConfig.imageBaseUrl) + "/images/generations");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            registerGenerationConnection(assistant, conn);
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(30000);
             conn.setReadTimeout(180000);
@@ -1085,15 +1091,19 @@ public class MainActivity extends Activity {
             if (image.isEmpty()) throw new RuntimeException("接口没有返回图片 URL 或 b64_json");
             assistant.content = "已生成图片\n" + image;
         } catch (Exception error) {
-            assistant.content = "生图失败：" + readableError(error);
+            if (isMessageCancelled(assistant)) markAssistantInterrupted(assistant);
+            else assistant.content = "生图失败：" + readableError(error);
         } finally {
+            unregisterGenerationConnection(assistant);
             assistant.loading = false;
+            if (isMessageCancelled(assistant)) markAssistantInterrupted(assistant);
             conversation.updatedAt = System.currentTimeMillis();
             mainHandler.post(() -> {
                 updateMessageText(assistant);
                 updateLoadingView(assistant);
                 saveConversations();
-                finishGeneration(conversation.id);
+                finishGeneration(conversation, assistant);
+                clearMessageCancelled(assistant);
             });
         }
     }
@@ -1125,6 +1135,7 @@ public class MainActivity extends Activity {
         try {
             URL url = new URL(trimSlash(requestConfig.baseUrl) + "/chat/completions");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            registerGenerationConnection(assistant, conn);
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(30000);
             conn.setReadTimeout(120000);
@@ -1157,6 +1168,7 @@ public class MainActivity extends Activity {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
+                    if (isMessageCancelled(assistant)) break;
                     line = line.trim();
                     if (!line.startsWith("data:")) continue;
                     String data = line.substring(5).trim();
@@ -1181,16 +1193,21 @@ public class MainActivity extends Activity {
                 }
             }
         } catch (Exception error) {
-            assistant.content = "请求失败：" + readableError(error);
+            if (isMessageCancelled(assistant)) markAssistantInterrupted(assistant);
+            else assistant.content = "请求失败：" + readableError(error);
             assistant.loading = false;
             mainHandler.post(() -> updateMessageText(assistant));
         } finally {
+            unregisterGenerationConnection(assistant);
             assistant.loading = false;
+            if (isMessageCancelled(assistant)) markAssistantInterrupted(assistant);
             conversation.updatedAt = System.currentTimeMillis();
             mainHandler.post(() -> {
+                updateMessageText(assistant);
                 updateLoadingView(assistant);
                 saveConversations();
-                finishGeneration(conversation.id);
+                finishGeneration(conversation, assistant);
+                clearMessageCancelled(assistant);
             });
         }
     }
@@ -1199,6 +1216,7 @@ public class MainActivity extends Activity {
         try {
             URL url = new URL(trimSlash(requestConfig.baseUrl) + "/messages");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            registerGenerationConnection(assistant, conn);
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(30000);
             conn.setReadTimeout(120000);
@@ -1230,6 +1248,7 @@ public class MainActivity extends Activity {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
+                    if (isMessageCancelled(assistant)) break;
                     line = line.trim();
                     if (!line.startsWith("data:")) continue;
                     String data = line.substring(5).trim();
@@ -1256,16 +1275,21 @@ public class MainActivity extends Activity {
                 }
             }
         } catch (Exception error) {
-            assistant.content = "请求失败：" + readableError(error);
+            if (isMessageCancelled(assistant)) markAssistantInterrupted(assistant);
+            else assistant.content = "请求失败：" + readableError(error);
             assistant.loading = false;
             mainHandler.post(() -> updateMessageText(assistant));
         } finally {
+            unregisterGenerationConnection(assistant);
             assistant.loading = false;
+            if (isMessageCancelled(assistant)) markAssistantInterrupted(assistant);
             conversation.updatedAt = System.currentTimeMillis();
             mainHandler.post(() -> {
+                updateMessageText(assistant);
                 updateLoadingView(assistant);
                 saveConversations();
-                finishGeneration(conversation.id);
+                finishGeneration(conversation, assistant);
+                clearMessageCancelled(assistant);
             });
         }
     }
@@ -1744,6 +1768,12 @@ public class MainActivity extends Activity {
 
     private void showSettingsDialogSmart() {
         LinearLayout form = dialogPanel("设置");
+        LinearLayout settingsSheet = new LinearLayout(this);
+        settingsSheet.setOrientation(LinearLayout.VERTICAL);
+        settingsSheet.addView(form, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
 
         Conversation conversationForSettings = activeConversation();
         final String[] pickedProvider = {settings.providerId};
@@ -1867,9 +1897,10 @@ public class MainActivity extends Activity {
         imageConfigBubble.setBackground(makeStrokeBg(Color.rgb(255, 248, 242), Color.rgb(226, 209, 190), dp(999)));
         LinearLayout.LayoutParams bubbleLp = new LinearLayout.LayoutParams(dp(132), dp(42));
         bubbleLp.gravity = Gravity.RIGHT;
-        bubbleLp.topMargin = dp(12);
-        bubbleLp.bottomMargin = dp(2);
-        form.addView(imageConfigBubble, bubbleLp);
+        bubbleLp.topMargin = dp(10);
+        bubbleLp.rightMargin = dp(18);
+        bubbleLp.bottomMargin = dp(4);
+        settingsSheet.addView(imageConfigBubble, bubbleLp);
         final boolean[] showingImageSettings = {false};
         imageConfigBubble.setOnClickListener(v -> {
             showingImageSettings[0] = !showingImageSettings[0];
@@ -1894,7 +1925,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        AlertDialog dialog = showCustomDialog(form);
+        AlertDialog dialog = showCustomDialog(settingsSheet);
         cancel.setOnClickListener(v -> dialog.dismiss());
         fetchModels.setOnClickListener(v -> {
             fetchModels.setEnabled(false);
@@ -2897,6 +2928,77 @@ public class MainActivity extends Activity {
         return bg;
     }
 
+    private void cancelActiveGeneration() {
+        Conversation conversation = activeConversation();
+        Message assistant = loadingAssistant(conversation);
+        if (assistant == null) {
+            toast("没有正在生成的回复");
+            refreshBusyState();
+            return;
+        }
+
+        synchronized (cancelledMessageIds) {
+            cancelledMessageIds.add(assistant.id);
+        }
+        markAssistantInterrupted(assistant);
+        HttpURLConnection connection;
+        synchronized (activeGenerationConnections) {
+            connection = activeGenerationConnections.get(assistant.id);
+        }
+        if (connection != null) connection.disconnect();
+
+        conversation.updatedAt = System.currentTimeMillis();
+        updateMessageText(assistant);
+        updateLoadingView(assistant);
+        saveConversations();
+        finishGeneration(conversation.id);
+        toast("已打断生成");
+    }
+
+    private Message loadingAssistant(Conversation conversation) {
+        if (conversation == null) return null;
+        for (int i = conversation.messages.size() - 1; i >= 0; i--) {
+            Message message = conversation.messages.get(i);
+            if ("assistant".equals(message.role) && message.loading) return message;
+        }
+        return null;
+    }
+
+    private void markAssistantInterrupted(Message assistant) {
+        assistant.loading = false;
+        String notice = "已打断生成";
+        if (assistant.content == null || assistant.content.trim().isEmpty()) {
+            assistant.content = notice;
+        } else if (!assistant.content.contains(notice)) {
+            assistant.content = assistant.content.trim() + "\n\n" + notice;
+        }
+    }
+
+    private void registerGenerationConnection(Message assistant, HttpURLConnection connection) {
+        synchronized (activeGenerationConnections) {
+            activeGenerationConnections.put(assistant.id, connection);
+        }
+        if (isMessageCancelled(assistant)) connection.disconnect();
+    }
+
+    private void unregisterGenerationConnection(Message assistant) {
+        synchronized (activeGenerationConnections) {
+            activeGenerationConnections.remove(assistant.id);
+        }
+    }
+
+    private boolean isMessageCancelled(Message assistant) {
+        synchronized (cancelledMessageIds) {
+            return assistant != null && cancelledMessageIds.contains(assistant.id);
+        }
+    }
+
+    private void clearMessageCancelled(Message assistant) {
+        synchronized (cancelledMessageIds) {
+            if (assistant != null) cancelledMessageIds.remove(assistant.id);
+        }
+    }
+
     private void startGeneration(String conversationId) {
         generatingConversationIds.add(conversationId);
         refreshBusyState();
@@ -2905,6 +3007,15 @@ public class MainActivity extends Activity {
     private void finishGeneration(String conversationId) {
         generatingConversationIds.remove(conversationId);
         refreshBusyState();
+    }
+
+    private void finishGeneration(Conversation conversation, Message assistant) {
+        Message currentLoading = loadingAssistant(conversation);
+        if (currentLoading == null || currentLoading.id.equals(assistant.id)) {
+            finishGeneration(conversation.id);
+        } else {
+            refreshBusyState();
+        }
     }
 
     private boolean isConversationGenerating(String conversationId) {
@@ -2922,15 +3033,19 @@ public class MainActivity extends Activity {
 
     private void setBusy(boolean busy) {
         if (sendButton == null || modelButton == null || thinkingButton == null || promptInput == null) return;
-        sendButton.setEnabled(!busy);
+        sendButton.setEnabled(true);
+        sendButton.setText(busy ? "停" : "↑");
+        sendButton.setTextSize(busy ? 15 : 22);
+        sendButton.setContentDescription(busy ? "打断生成" : "发送");
+        sendButton.setBackground(makeSolidBg(busy ? accentDark : accent, dp(23)));
         modelButton.setEnabled(!busy);
         thinkingButton.setEnabled(!busy);
         promptInput.setEnabled(!busy);
         if (imageModeButton != null) imageModeButton.setEnabled(!busy);
         sendButton.animate()
-                .alpha(busy ? 0.55f : 1.0f)
-                .scaleX(busy ? 0.96f : 1.0f)
-                .scaleY(busy ? 0.96f : 1.0f)
+                .alpha(1.0f)
+                .scaleX(1.0f)
+                .scaleY(1.0f)
                 .setDuration(140)
                 .start();
     }
