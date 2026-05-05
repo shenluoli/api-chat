@@ -545,12 +545,12 @@ public class MainActivity extends Activity {
     }
 
     private void addMessageActions(LinearLayout wrap, Message message, boolean assistantRole) {
-        if (message.loading) return;
-
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(assistantRole ? Gravity.LEFT : Gravity.RIGHT);
         actions.setPadding(dp(8), dp(6), dp(8), 0);
+        actions.setTag(message.id + ":actions");
+        actions.setVisibility(message.loading ? View.GONE : View.VISIBLE);
 
         Button action = tinyActionButton(assistantRole ? "重新生成" : "编辑并重发");
         action.setOnClickListener(v -> {
@@ -1286,6 +1286,7 @@ public class MainActivity extends Activity {
 
     private void updateLoadingView(Message message) {
         findAndSetVisibility(messageList, message.id + ":loadingBox", message.loading ? View.VISIBLE : View.GONE);
+        findAndSetVisibility(messageList, message.id + ":actions", message.loading ? View.GONE : View.VISIBLE);
         findAndSetText(messageList, message.id + ":loadingText", loadingText(message));
     }
 
