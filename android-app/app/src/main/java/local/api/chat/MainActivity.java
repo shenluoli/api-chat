@@ -434,9 +434,12 @@ public class MainActivity extends Activity {
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setGravity(Gravity.NO_GRAVITY);
         bubble.setPadding(dp(14), dp(12), dp(14), dp(12));
+        bubble.setTag(message.id + ":bubble");
+        boolean hasReasoning = assistantRole && !message.reasoningContent.trim().isEmpty();
         if (assistantRole && message.loading && message.content.trim().isEmpty()) {
             bubble.setMinimumWidth(dp(186));
         }
+        if (hasReasoning) bubble.setMinimumWidth(maxBubbleWidth);
         bubble.setBackground(makeSolidBg(
                 assistantRole ? sage : Color.rgb(255, 241, 233),
                 dp(18)
@@ -555,7 +558,7 @@ public class MainActivity extends Activity {
         bubble.addView(media, mediaLp);
 
         LinearLayout.LayoutParams bubbleLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                hasReasoning ? maxBubbleWidth : LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         );
         bubbleLp.gravity = assistantRole ? Gravity.LEFT : Gravity.RIGHT;
@@ -1346,6 +1349,9 @@ public class MainActivity extends Activity {
         changed |= findAndSetText(messageList, message.id + ":reasoningToggle", reasoningTitle(message));
         changed |= findAndSetText(messageList, message.id + ":reasoningText", message.reasoningContent);
         changed |= findAndSetVisibility(messageList, message.id + ":reasoningText", message.reasoningOpen ? View.VISIBLE : View.GONE);
+        if (!message.reasoningContent.trim().isEmpty()) {
+            changed |= findAndSetWidth(messageList, message.id + ":bubble", maxMessageBubbleWidth());
+        }
         if (changed) updateLoadingView(message);
         if (changed && keepAtBottom && autoFollowBottom) scrollToBottom();
     }
@@ -1394,6 +1400,28 @@ public class MainActivity extends Activity {
                 return true;
             }
             if (child instanceof LinearLayout && findAndSetVisibility((LinearLayout) child, tag, visibility)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean findAndSetWidth(LinearLayout parent, String tag, int width) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View child = parent.getChildAt(i);
+            if (tag.equals(child.getTag())) {
+                ViewGroup.LayoutParams params = child.getLayoutParams();
+                if (params != null && params.width != width) {
+                    params.width = width;
+                    child.setMinimumWidth(width);
+                    child.setLayoutParams(params);
+                } else {
+                    child.setMinimumWidth(width);
+                    child.requestLayout();
+                }
+                return true;
+            }
+            if (child instanceof LinearLayout && findAndSetWidth((LinearLayout) child, tag, width)) {
                 return true;
             }
         }
@@ -2615,7 +2643,11 @@ public class MainActivity extends Activity {
 
         @Override
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            int cappedWidth = View.MeasureSpec.makeMeasureSpec(maxWidth, View.MeasureSpec.AT_MOST);
+            int mode = View.MeasureSpec.getMode(widthMeasureSpec);
+            int size = View.MeasureSpec.getSize(widthMeasureSpec);
+            int cappedSize = size <= 0 ? maxWidth : Math.min(size, maxWidth);
+            int cappedMode = mode == View.MeasureSpec.EXACTLY ? View.MeasureSpec.EXACTLY : View.MeasureSpec.AT_MOST;
+            int cappedWidth = View.MeasureSpec.makeMeasureSpec(cappedSize, cappedMode);
             super.onMeasure(cappedWidth, heightMeasureSpec);
         }
     }
